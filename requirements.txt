@@ -1,6 +1,4 @@
-crawl4ai
 playwright
-google-genai
 requests
 python-dotenv
 pydantic

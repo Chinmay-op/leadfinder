@@ -1,0 +1,54 @@
+{
+  "target_roles": [
+    "Safety Manager",
+    "Operations Manager",
+    "Mine Manager",
+    "Plant Manager",
+    "Maintenance Manager",
+    "Production Supervisor",
+    "EHS Manager",
+    "Site Director",
+    "Operations Director",
+    "Safety Supervisor",
+    "Maintenance Director",
+    "Project Manager",
+    "Facilities Manager",
+    "Compliance Manager",
+    "Training Coordinator"
+  ],
+  "target_industries": [
+    "Mining",
+    "Metals & Mining",
+    "Coal Mining",
+    "Mineral Extraction",
+    "Quarrying"
+  ],
+  "company_size_min": 50,
+  "company_size_max": 5000,
+  "pain_points": [
+    "High risk of worker injuries and fatalities in hazardous mining environments",
+    "Difficulty maintaining compliance with mining safety regulations and inspections",
+    "Lack of real-time monitoring and emergency response capabilities underground",
+    "Operational downtime caused by safety incidents and equipment hazards",
+    "Challenges training and protecting workers in remote or dangerous conditions"
+  ],
+  "search_keywords": [
+    "underground mining operations",
+    "surface mining company",
+    "mineral extraction company",
+    "coal mining operator",
+    "quarry operations company"
+  ],
+  "exclusions": [
+    "Safety equipment distributors",
+    "Mining safety consultants",
+    "Consumer electronics manufacturers"
+  ],
+  "decision_maker_departments": [
+    "Operations",
+    "Health & Safety",
+    "Maintenance",
+    "Compliance"
+  ],
+  "value_proposition": "Improve miner safety, reduce workplace incidents, and support regulatory compliance with advanced mining safety devices designed for hazardous environments."
+}

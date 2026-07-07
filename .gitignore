@@ -1,3 +1,13 @@
 .env
 __pycache__/
 *.pyc
+.agents/
+.claude/
+.codex/
+.cursor/
+.gemini/
+*.csv
+*.xlsx
+sessions/
+recent_changes.diff
+out.log

@@ -30,38 +30,51 @@ def _score_style(score):
     else:             k = "poor"
     return SCORE_STYLES[k]
 
-def main():
-    # ── Load CSV ──────────────────────────────────────────────────────────────
-    try:
-        with open("enriched_leads.csv", "r", encoding="utf-8") as f:
-            rows = list(csv.DictReader(f))
-    except FileNotFoundError:
-        try:
-            with open("businesses_data.csv", "r", encoding="utf-8") as f:
-                rows = list(csv.DictReader(f))
-                print("Notice: using businesses_data.csv as enriched_leads.csv was not found.")
-        except FileNotFoundError:
-            print("No CSV files found. Please run main.py first.")
-            sys.exit(1)
+def run_export(businesses: list = None, progress=None):
+    if progress is None:
+        progress = print
+    
+    if not businesses:
+        progress("No data to export.")
+        return None
+
+    # Convert Business objects to dicts for easier processing
+    rows = [b.model_dump() for b in businesses]
 
     # ── Normalize scores + sort ───────────────────────────────────────────────
+    import json
     for r in rows:
         try:
-            r["fit_score"] = int(r.get("fit_score", 0))
+            # We check icp_match_score first, fallback to fit_score
+            score = r.get("icp_match_score")
+            if score is None or score == "":
+                score = r.get("fit_score", 0)
+            r["icp_match_score"] = int(score)
+            
+            # Since businesses is a list of objects, contacts is already a list of objects or dicts
+            # But model_dump() usually converts pydantic models to dicts.
+            if 'contacts' not in r:
+                r['contacts'] = []
         except ValueError:
-            r["fit_score"] = 0
-    rows.sort(key=lambda x: x["fit_score"], reverse=True)
+            r["icp_match_score"] = 0
+            
+    rows.sort(key=lambda x: x["icp_match_score"], reverse=True)
 
     # ── Print top 20 ─────────────────────────────────────────────────────────
-    print("\n--- Top 20 Companies ---")
+    progress("\n--- Top 20 Companies ---")
     for i, row in enumerate(rows[:20]):
-        print(f"{i+1}. {row.get('company_name', 'Unknown')} - Score: {row.get('fit_score', 0)}")
+        progress(f"{i+1}. {row.get('company_name', 'Unknown')} - Score: {row.get('icp_match_score', 0)}")
 
     if not rows:
-        print("No data to export.")
-        sys.exit(0)
+        progress("No data to export.")
+        return None
 
-    headers = list(rows[0].keys())
+    headers = [
+        "company_name", "industry", "website", "location", 
+        "icp_match_score", "icp_match_reason",
+        "contact_name", "contact_title", "contact_department", "contact_linkedin",
+        "email", "email_confidence", "email_source", "phone", "icebreaker", "source", "status"
+    ]
 
     # ── Workbook ──────────────────────────────────────────────────────────────
     wb = Workbook()
@@ -85,23 +98,52 @@ def main():
 
     # Detect key column indices (flexible — works whatever order your CSV has)
     h_lower = [h.lower() for h in headers]
-    score_col    = next((i+1 for i, h in enumerate(h_lower) if "fit_score" in h), None)
+    score_col    = next((i+1 for i, h in enumerate(h_lower) if "icp_match_score" in h or "fit_score" in h), None)
     reason_col   = next((i+1 for i, h in enumerate(h_lower) if "fit_reason" in h), None)
     desc_col     = next((i+1 for i, h in enumerate(h_lower) if "description" in h), None)
 
     wrap_cols = {c for c in [reason_col, desc_col] if c}
 
     emails_found = phones_found = total_score = 0
+    row_idx = 2
 
-    for row_idx, row in enumerate(rows, start=2):
-        bg = ROW_ALT if row_idx % 2 == 0 else ROW_NORMAL
-        score = row.get("fit_score", 0)
+    for base_row_idx, row in enumerate(rows, start=2):
+        score = row.get("icp_match_score", 0)
         total_score += score
-        if row.get("email"): emails_found += 1
-        if row.get("phone"): phones_found += 1
+        
+        contacts = row.get("contacts", [])
+        if not contacts:
+            # Create a single empty contact
+            contacts = [{}]
+            
+        for contact in contacts:
+            bg = ROW_ALT if row_idx % 2 == 0 else ROW_NORMAL
+            
+            flat_row = {
+                "company_name": row.get("company_name", ""),
+                "industry": row.get("industry", ""),
+                "website": row.get("website", ""),
+                "location": row.get("location", ""),
+                "icp_match_score": score,
+                "icp_match_reason": row.get("icp_match_reason") or row.get("fit_reason", ""),
+                "contact_name": contact.get("full_name", ""),
+                "contact_title": contact.get("title", ""),
+                "contact_department": contact.get("department", ""),
+                "contact_linkedin": contact.get("linkedin_url", ""),
+                "email": contact.get("email") or row.get("email", ""),
+                "email_confidence": contact.get("email_confidence", ""),
+                "email_source": contact.get("email_source", ""),
+                "phone": contact.get("phone") or row.get("phone", ""),
+                "icebreaker": contact.get("icebreaker", ""),
+                "source": row.get("source", ""),
+                "status": row.get("status", "")
+            }
+            
+            if flat_row["email"]: emails_found += 1
+            if flat_row["phone"]: phones_found += 1
 
         for col_idx, h in enumerate(headers, start=1):
-            value = row.get(h, "")
+            value = flat_row.get(h, "")
             cell  = ws.cell(row=row_idx, column=col_idx, value=value)
             cell.border = _border()
 
@@ -119,6 +161,7 @@ def main():
                 )
 
         ws.row_dimensions[row_idx].height = 55
+        row_idx += 1
 
     # Column widths — cap long ones, keep short ones tight
     COL_WIDTH_MAP = {
@@ -126,6 +169,7 @@ def main():
         "industry": 22,     "description": 46, "company_si": 16,
         "location": 20,     "email": 26,   "phone": 16,
         "fit_score": 11,    "fit_reason": 44,
+        "icebreaker": 60,   "source": 15,
     }
     for col_idx, h in enumerate(headers, start=1):
         key = h.lower()[:10]
@@ -136,16 +180,10 @@ def main():
             width = min(max(max_len + 2, len(h) + 2), 40)
         ws.column_dimensions[get_column_letter(col_idx)].width = width
 
-    # Excel table with built-in filter
+    # Excel filter
     last_col = get_column_letter(len(headers))
-    last_row = len(rows) + 1
-    tab = Table(displayName="Leads", ref=f"A1:{last_col}{last_row}")
-    tab.tableStyleInfo = TableStyleInfo(
-        name="TableStyleMedium2",
-        showRowStripes=True, showColumnStripes=False,
-        showFirstColumn=False, showLastColumn=False
-    )
-    ws.add_table(tab)
+    last_row = row_idx - 1
+    ws.auto_filter.ref = f"A1:{last_col}{last_row}"
 
     # ════════════════════════════════════════════════════════════════════════════
     # Sheet 2 — Score Summary
@@ -174,7 +212,7 @@ def main():
 
     for row_idx, (label, fn) in enumerate(tiers, start=2):
         matched = [r.get("company_name", "") for r in rows
-                   if isinstance(r.get("fit_score"), int) and fn(r["fit_score"])]
+                   if isinstance(r.get("icp_match_score"), int) and fn(r["icp_match_score"])]
         bg = ROW_ALT if row_idx % 2 == 0 else ROW_NORMAL
         for col_idx, val in enumerate([label, len(matched), ", ".join(matched)], start=1):
             cell = ws2.cell(row=row_idx, column=col_idx, value=val)
@@ -185,18 +223,31 @@ def main():
         ws2.row_dimensions[row_idx].height = 22
 
     # ── Save ──────────────────────────────────────────────────────────────────
-    wb.save("final_leads.xlsx")
-    print(f"\nSaved {len(rows)} companies to final_leads.xlsx")
+    output_path = "final_leads.xlsx"
+    try:
+        wb.save(output_path)
+    except PermissionError:
+        import time
+        output_path = f"final_leads_{int(time.time())}.xlsx"
+        wb.save(output_path)
+        progress(f"\n[WARNING] final_leads.xlsx is open. Saved to {output_path} instead.")
+        
+    progress(f"\nSaved {len(rows)} companies to {output_path}")
 
     # ── Summary ───────────────────────────────────────────────────────────────
     avg_score = total_score / len(rows) if rows else 0
-    print("\n--- Summary ---")
-    print(f"Total companies : {len(rows)}")
-    print(f"Average score   : {avg_score:.1f}")
-    print(f"Emails found    : {emails_found}")
-    print(f"Phones found    : {phones_found}")
+    icebreakers_generated = sum(1 for r in rows if r.get("icebreaker"))
+    progress("\n--- Summary ---")
+    progress(f"Total companies : {len(rows)}")
+    progress(f"Average score   : {avg_score:.1f}")
+    progress(f"Emails found    : {emails_found}")
+    progress(f"Phones found    : {phones_found}")
+    progress(f"Icebreakers Generated : {icebreakers_generated}")
+    return output_path
+
+def generate_excel():
+    """Programmatic helper: generates the Excel file and returns its path."""
+    return run_export(progress=print)
 
 if __name__ == "__main__":
-    main()
-
-    # empty
+    run_export()

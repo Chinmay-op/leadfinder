@@ -36,13 +36,18 @@ def extract_contacts_from_html(html: str) -> dict:
     raw_phones = PHONE_PATTERN.findall(text)
     phones = [p.strip() for p in raw_phones if len(re.sub(r'\D', '', p)) >= 10]
     
-    # Return the first found or empty
+    # Return all found
     return {
-        "email": emails[0] if emails else "",
-        "phone": phones[0] if phones else ""
+        "emails": emails,
+        "phones": phones
     }
 
-def scrape_company_website(website: str) -> dict:
+import asyncio
+from playwright.async_api import async_playwright
+
+async def scrape_company_website(context, website: str, progress=None) -> dict:
+    if progress is None:
+        progress = print
     if not website or " " in website or "." not in website:
         return {}
         
@@ -50,13 +55,16 @@ def scrape_company_website(website: str) -> dict:
         website = "http://" + website
         
     try:
+        page = await context.new_page()
         # Visit Homepage
-        res = requests.get(website, headers=HEADERS, timeout=8)
-        contacts = extract_contacts_from_html(res.text)
+        await page.goto(website, wait_until="domcontentloaded", timeout=8000)
+        await asyncio.sleep(0.2) # Allow slight render time
+        html = await page.content()
+        contacts = extract_contacts_from_html(html)
         
-        # If no email found, try to find a Contact page and scrape that
-        if not contacts["email"] or not contacts["phone"]:
-            soup = BeautifulSoup(res.text, "html.parser")
+        # If no emails found, try to find a Contact page and scrape that
+        if not contacts["emails"] or not contacts["phones"]:
+            soup = BeautifulSoup(html, "html.parser")
             contact_link = None
             for a in soup.find_all("a", href=True):
                 if "contact" in a.text.lower() or "contact" in a["href"].lower():
@@ -65,55 +73,127 @@ def scrape_company_website(website: str) -> dict:
                     
             if contact_link:
                 try:
-                    c_res = requests.get(contact_link, headers=HEADERS, timeout=10)
-                    c_contacts = extract_contacts_from_html(c_res.text)
-                    if not contacts["email"]: contacts["email"] = c_contacts["email"]
-                    if not contacts["phone"]: contacts["phone"] = c_contacts["phone"]
+                    await page.goto(contact_link, wait_until="domcontentloaded", timeout=8000)
+                    await asyncio.sleep(0.2)
+                    c_html = await page.content()
+                    c_contacts = extract_contacts_from_html(c_html)
+                    if not contacts["emails"]: contacts["emails"] = c_contacts["emails"]
+                    if not contacts["phones"]: contacts["phones"] = c_contacts["phones"]
                 except Exception:
                     pass
                     
+        await page.close()
         return contacts
     except Exception as e:
-        print(f"Error scraping {website}: {e}")
+        progress(f"Error scraping {website}: {e}")
         return {}
 
-def main():
+import os
+
+async def run_enrichment(progress=None, session_id=None):
+    if progress is None:
+        progress = print
     try:
-        with open("businesses_data.csv", "r", encoding="utf-8") as f:
+        # Always read from businesses_data.csv — it contains only the current session's data
+        input_file = "businesses_data.csv"
+        with open(input_file, "r", encoding="utf-8") as f:
             reader = csv.DictReader(f)
             rows = list(reader)
     except FileNotFoundError:
-        print("businesses_data.csv not found. Please run main.py first.")
-        sys.exit(1)
+        progress("businesses_data.csv not found. Please run main.py first.")
+        return
 
     enriched_rows = []
+    progress(f"Loaded {len(rows)} companies. Starting custom web scraping for contacts using Playwright...")
     
-    print(f"Loaded {len(rows)} companies. Starting custom web scraping for contacts...")
-    
-    for row in rows:
-        website = row.get("website", "")
-        if not website:
-            enriched_rows.append(row)
-            continue
-            
-        print(f"Scraping: {row.get('company_name')} ({website})...")
-        contacts = scrape_company_website(website)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=False)
+        context = await browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        )
         
-        if contacts.get("email"):
-            row["email"] = contacts["email"]
-        if contacts.get("phone"):
-            row["phone"] = contacts["phone"]
-            
-        enriched_rows.append(row)
-        time.sleep(1) # Be nice to servers
+        target_rows = []
+        other_rows = []
+        for row in rows:
+            if session_id and row.get("session_id") != session_id:
+                other_rows.append(row)
+            else:
+                target_rows.append(row)
+                
+        progress(f"Loaded {len(target_rows)} companies to scrape (from {len(rows)} total).")
         
-    if enriched_rows:
-        keys = enriched_rows[0].keys()
-        with open("enriched_leads.csv", "w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=keys)
+        sem = asyncio.Semaphore(5)
+        
+        async def process_row(i, row):
+            if "contacts" not in row:
+                row["contacts"] = "[]"
+                
+            website = row.get("website", "")
+            if not website:
+                enriched_rows.append(row)
+                return
+                
+            async with sem:
+                progress(f"[{i+1}/{len(rows)}] Scraping: {row.get('company_name')} ({website})...")
+                contacts = await scrape_company_website(context, website, progress=progress)
+                
+                emails_found = list(dict.fromkeys(contacts.get("emails", [])))
+                phones_found = list(dict.fromkeys(contacts.get("phones", [])))
+                
+                if emails_found:
+                    row["email"] = emails_found[0]
+                if phones_found:
+                    row["phone"] = phones_found[0]
+                    
+                try:
+                    import json
+                    existing_contacts = json.loads(row.get("contacts", "[]")) if row.get("contacts") else []
+                except:
+                    existing_contacts = []
+                    
+                max_len = max(len(emails_found), len(phones_found))
+                new_contacts = []
+                for j in range(max_len):
+                    e = emails_found[j] if j < len(emails_found) else ""
+                    p = phones_found[j] if j < len(phones_found) else ""
+                    if e or p:
+                        new_contacts.append({
+                            "first_name": "",
+                            "last_name": "",
+                            "full_name": "",
+                            "title": "Website Contact",
+                            "seniority": "Unknown",
+                            "email": e,
+                            "email_confidence": 0.5 if e else None,
+                            "email_source": "website_scrape" if e else None,
+                            "phone": p
+                        })
+                
+                existing_contacts.extend(new_contacts)
+                row["contacts"] = json.dumps(existing_contacts)
+                    
+                enriched_rows.append(row)
+
+        tasks = [process_row(i, row) for i, row in enumerate(target_rows)]
+        if tasks:
+            await asyncio.gather(*tasks)
+            
+        await browser.close()
+        
+    if enriched_rows or other_rows:
+        # Combine them back
+        final_rows = other_rows + enriched_rows
+        all_keys = []
+        for r in final_rows:
+            for k in r.keys():
+                if k not in all_keys:
+                    all_keys.append(k)
+        
+        with open("businesses_data.csv", "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=all_keys)
             writer.writeheader()
-            writer.writerows(enriched_rows)
-        print(f"Saved {len(enriched_rows)} enriched companies to enriched_leads.csv")
+            writer.writerows(final_rows)
+        progress(f"Saved {len(enriched_rows)} enriched companies to businesses_data.csv")
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(run_enrichment())

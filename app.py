@@ -37,8 +37,18 @@ from pydantic import BaseModel
 from session_routes import router as session_router
 from session_store import save_session
 
+from fastapi.middleware.cors import CORSMiddleware
+
 # ── App Setup ─────────────────────────────────────────────────────────────────
 app = FastAPI(title="Lead Finder", version="3.0.0")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"], # For production, you may want to restrict this to the static web app origin
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Serve static files (CSS, JS)
 STATIC_DIR = Path(__file__).parent / "static"

@@ -4,6 +4,8 @@
    ═══════════════════════════════════════════════════════════════════ */
 
 // ── Utils ─────────────────────────────────────────────────────────
+const API_BASE_URL = 'http://leadscribeai.centralindia.cloudapp.azure.com:8000'; // Update port to 80/443 if you use Nginx/Caddy
+
 function esc(str) {
   if (!str) return '';
   return String(str)
@@ -196,7 +198,7 @@ async function handleLogin(e) {
   form.append('password', p);
   
   try {
-    const res = await fetch('/api/auth/login', {
+    const res = await fetch(API_BASE_URL + '/api/auth/login', {
       method: 'POST',
       body: form,
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
@@ -680,6 +682,9 @@ function closeModal() {
 }
 
 async function fetchJSON(url, opts = {}) {
+  if (url.startsWith('/api/')) {
+    url = API_BASE_URL + url;
+  }
   const fetchOpts = { 
     headers: { 
       'Content-Type': 'application/json',
@@ -832,8 +837,8 @@ async function finishPipeline() {
 async function exportXLSX() {
   try {
     const exportUrl = state.sessionId
-      ? `/api/export?session_id=${encodeURIComponent(state.sessionId)}`
-      : '/api/export';
+      ? `${API_BASE_URL}/api/export?session_id=${encodeURIComponent(state.sessionId)}`
+      : `${API_BASE_URL}/api/export`;
     const res = await fetch(exportUrl);
     if (!res.ok) throw new Error('No data to export');
     const blob = await res.blob();
@@ -855,7 +860,7 @@ let lastStatusEl = null;
 function initSSE() {
   if (eventSource) eventSource.close();
   if (!state.token) return;
-  eventSource = new EventSource('/api/progress?token=' + encodeURIComponent(state.token));
+  eventSource = new EventSource(API_BASE_URL + '/api/progress?token=' + encodeURIComponent(state.token));
   
   eventSource.onmessage = (event) => {
     try {

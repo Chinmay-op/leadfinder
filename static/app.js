@@ -4,7 +4,7 @@
    ═══════════════════════════════════════════════════════════════════ */
 
 // ── Utils ─────────────────────────────────────────────────────────
-const API_BASE_URL = 'http://leadscribeai.centralindia.cloudapp.azure.com:8000'; // Update port to 80/443 if you use Nginx/Caddy
+const API_BASE_URL = 'https://leadscribeai.centralindia.cloudapp.azure.com';
 
 function esc(str) {
   if (!str) return '';

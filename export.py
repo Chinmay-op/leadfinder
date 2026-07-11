@@ -73,7 +73,7 @@ def run_export(businesses: list = None, progress=None):
         "company_name", "industry", "website", "location", 
         "icp_match_score", "icp_match_reason",
         "contact_name", "contact_title", "contact_department", "contact_linkedin",
-        "email", "email_confidence", "email_source", "phone", "icebreaker", "source", "status"
+        "email", "email_status", "email_confidence", "email_source", "phone", "icebreaker", "source", "status"
     ]
 
     # ── Workbook ──────────────────────────────────────────────────────────────
@@ -101,8 +101,17 @@ def run_export(businesses: list = None, progress=None):
     score_col    = next((i+1 for i, h in enumerate(h_lower) if "icp_match_score" in h or "fit_score" in h), None)
     reason_col   = next((i+1 for i, h in enumerate(h_lower) if "fit_reason" in h), None)
     desc_col     = next((i+1 for i, h in enumerate(h_lower) if "description" in h), None)
+    email_status_col = next((i+1 for i, h in enumerate(h_lower) if h == "email_status"), None)
 
     wrap_cols = {c for c in [reason_col, desc_col] if c}
+
+    # Email status styles
+    VERIFIED_BG   = "D6F4E3"
+    VERIFIED_FG   = "1A7F4B"
+    UNVERIFIED_BG = "FFF3CD"
+    UNVERIFIED_FG = "7A5C00"
+    MISSING_BG    = "FFD6D6"
+    MISSING_FG    = "8B1A1A"
 
     emails_found = phones_found = total_score = 0
     row_idx = 2
@@ -113,11 +122,28 @@ def run_export(businesses: list = None, progress=None):
         
         contacts = row.get("contacts", [])
         if not contacts:
-            # Create a single empty contact
+            # Create a single empty contact so the company still appears
             contacts = [{}]
             
         for contact in contacts:
             bg = ROW_ALT if row_idx % 2 == 0 else ROW_NORMAL
+            
+            email_val = contact.get("email") or row.get("email", "")
+            email_conf = contact.get("email_confidence", "")
+            email_src = contact.get("email_source", "")
+            
+            # Determine email verification status
+            if email_val:
+                if email_conf and float(email_conf) >= 0.8:
+                    email_status = "✓ Verified"
+                elif email_conf and float(email_conf) >= 0.5:
+                    email_status = "~ Likely"
+                elif email_conf:
+                    email_status = "? Unverified"
+                else:
+                    email_status = "~ Found"
+            else:
+                email_status = "✗ Missing"
             
             flat_row = {
                 "company_name": row.get("company_name", ""),
@@ -130,9 +156,10 @@ def run_export(businesses: list = None, progress=None):
                 "contact_title": contact.get("title", ""),
                 "contact_department": contact.get("department", ""),
                 "contact_linkedin": contact.get("linkedin_url", ""),
-                "email": contact.get("email") or row.get("email", ""),
-                "email_confidence": contact.get("email_confidence", ""),
-                "email_source": contact.get("email_source", ""),
+                "email": email_val,
+                "email_status": email_status,
+                "email_confidence": email_conf,
+                "email_source": email_src,
                 "phone": contact.get("phone") or row.get("phone", ""),
                 "icebreaker": contact.get("icebreaker", ""),
                 "source": row.get("source", ""),
@@ -142,26 +169,42 @@ def run_export(businesses: list = None, progress=None):
             if flat_row["email"]: emails_found += 1
             if flat_row["phone"]: phones_found += 1
 
-        for col_idx, h in enumerate(headers, start=1):
-            value = flat_row.get(h, "")
-            cell  = ws.cell(row=row_idx, column=col_idx, value=value)
-            cell.border = _border()
+            # Write this contact as a row in Excel
+            for col_idx, h in enumerate(headers, start=1):
+                value = flat_row.get(h, "")
+                cell  = ws.cell(row=row_idx, column=col_idx, value=value)
+                cell.border = _border()
 
-            if col_idx == score_col and isinstance(score, int):
-                fg, score_bg = _score_style(score)
-                cell.fill      = PatternFill("solid", fgColor=score_bg)
-                cell.font      = Font(name="Arial", bold=True, color=fg, size=9)
-                cell.alignment = Alignment(horizontal="center", vertical="center")
-            else:
-                cell.fill      = PatternFill("solid", fgColor=bg)
-                cell.font      = Font(name="Arial", size=9)
-                cell.alignment = Alignment(
-                    vertical="top",
-                    wrap_text=True if col_idx in wrap_cols else False
-                )
+                if col_idx == score_col and isinstance(score, int):
+                    fg, score_bg = _score_style(score)
+                    cell.fill      = PatternFill("solid", fgColor=score_bg)
+                    cell.font      = Font(name="Arial", bold=True, color=fg, size=9)
+                    cell.alignment = Alignment(horizontal="center", vertical="center")
+                elif col_idx == email_status_col:
+                    # Color the email status cell
+                    if "Verified" in str(value):
+                        cell.fill = PatternFill("solid", fgColor=VERIFIED_BG)
+                        cell.font = Font(name="Arial", bold=True, color=VERIFIED_FG, size=9)
+                    elif "Likely" in str(value) or "Found" in str(value):
+                        cell.fill = PatternFill("solid", fgColor=UNVERIFIED_BG)
+                        cell.font = Font(name="Arial", bold=True, color=UNVERIFIED_FG, size=9)
+                    elif "Missing" in str(value):
+                        cell.fill = PatternFill("solid", fgColor=MISSING_BG)
+                        cell.font = Font(name="Arial", bold=True, color=MISSING_FG, size=9)
+                    else:
+                        cell.fill = PatternFill("solid", fgColor=bg)
+                        cell.font = Font(name="Arial", size=9)
+                    cell.alignment = Alignment(horizontal="center", vertical="center")
+                else:
+                    cell.fill      = PatternFill("solid", fgColor=bg)
+                    cell.font      = Font(name="Arial", size=9)
+                    cell.alignment = Alignment(
+                        vertical="top",
+                        wrap_text=True if col_idx in wrap_cols else False
+                    )
 
-        ws.row_dimensions[row_idx].height = 55
-        row_idx += 1
+            ws.row_dimensions[row_idx].height = 28
+            row_idx += 1
 
     # Column widths — cap long ones, keep short ones tight
     COL_WIDTH_MAP = {

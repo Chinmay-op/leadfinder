@@ -4,6 +4,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 APOLLO_API_KEY = os.getenv("APOLLO_API_KEY")
+APOLLO_MAX_COMPANIES = int(os.getenv("APOLLO_MAX_COMPANIES", "50"))
+APOLLO_MAX_CONTACTS_PER_COMPANY = int(os.getenv("APOLLO_MAX_CONTACTS_PER_COMPANY", "5"))
 AZURE_OPENAI_KEY = os.getenv("AZURE_OPENAI_KEY")
 AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
 

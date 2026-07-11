@@ -47,7 +47,9 @@ const state = {
   sessionId: null, // Tracks current pipeline run to filter results
   token: localStorage.getItem('lf_token') || null,
   role: null,
-  username: null
+  username: null,
+  pipeline: localStorage.getItem('lf_pipeline') || 'apify', // 'apify' | 'apollo'
+  pipelineChosen: !!localStorage.getItem('lf_pipeline'), // Has user ever chosen?
 };
 
 // ── Auth Handling ─────────────────────────────────────────────────
@@ -67,10 +69,61 @@ function setAuth(token, role, username) {
     document.getElementById('user-role-badge').textContent = role || 'user';
     initSSE(); // Connect SSE only when authenticated
     loadSessions(); // Load history sidebar
+    updatePipelineIndicator();
+    // Show pipeline selector on first login if user hasn't chosen yet
+    if (!state.pipelineChosen) {
+      showPipelineSelector();
+    }
   } else {
     document.getElementById('login-overlay').style.display = 'flex';
     document.getElementById('user-profile').style.display = 'none';
+    document.getElementById('pipeline-indicator').style.display = 'none';
     if (eventSource) { eventSource.close(); eventSource = null; }
+  }
+}
+
+// ── Pipeline Selector ─────────────────────────────────────────────
+function showPipelineSelector() {
+  if (state.pipelineRunning) return; // Don't allow switching mid-pipeline
+  const overlay = document.getElementById('pipeline-overlay');
+  overlay.style.display = 'flex';
+  // Highlight current selection
+  document.querySelectorAll('.pipeline-card').forEach(card => {
+    card.classList.toggle('active', card.dataset.pipeline === state.pipeline);
+  });
+  document.getElementById('pipeline-confirm-name').textContent = 
+    state.pipeline === 'apollo' ? 'Apollo Pipeline' : 'Apify Pipeline';
+}
+
+function selectPipeline(pipeline) {
+  state.pipeline = pipeline;
+  document.querySelectorAll('.pipeline-card').forEach(card => {
+    card.classList.toggle('active', card.dataset.pipeline === pipeline);
+  });
+  document.getElementById('pipeline-confirm-name').textContent = 
+    pipeline === 'apollo' ? 'Apollo Pipeline' : 'Apify Pipeline';
+}
+
+function confirmPipeline() {
+  localStorage.setItem('lf_pipeline', state.pipeline);
+  state.pipelineChosen = true;
+  document.getElementById('pipeline-overlay').style.display = 'none';
+  updatePipelineIndicator();
+}
+
+function updatePipelineIndicator() {
+  const indicator = document.getElementById('pipeline-indicator');
+  const dot = document.getElementById('pipeline-dot');
+  const label = document.getElementById('pipeline-label');
+  if (!indicator) return;
+  
+  indicator.style.display = 'flex';
+  if (state.pipeline === 'apollo') {
+    label.textContent = 'Apollo';
+    dot.className = 'pipeline-indicator-dot apollo';
+  } else {
+    label.textContent = 'Apify';
+    dot.className = 'pipeline-indicator-dot apify';
   }
 }
 
@@ -562,6 +615,26 @@ function renderSummary(leads) {
   }).length;
   const contactCount = leads.reduce((sum, l) => sum + (l.contacts ? l.contacts.length : 0), 0);
 
+  // Email verification breakdown
+  let verified = 0, likely = 0, unverified = 0, missing = 0;
+  leads.forEach(l => {
+    const contacts = l.contacts || [];
+    if (contacts.length === 0) {
+      // Check company-level email
+      if (l.email) likely++; else missing++;
+    }
+    contacts.forEach(c => {
+      if (c.email) {
+        const conf = c.email_confidence || 0;
+        if (conf >= 0.8) verified++;
+        else if (conf >= 0.5) likely++;
+        else unverified++;
+      } else {
+        missing++;
+      }
+    });
+  });
+
   const html = `
     Pipeline complete!
     <div class="summary-card">
@@ -581,6 +654,31 @@ function renderSummary(leads) {
         <div class="summary-stat">
           <div class="summary-stat-num">${phoneCount}</div>
           <div class="summary-stat-label">With Phones</div>
+        </div>
+      </div>
+      <div class="email-verify-card">
+        <div class="email-verify-title">📧 Email Verification Status</div>
+        <div class="email-verify-bars">
+          <div class="email-verify-row">
+            <span class="email-badge verified">✓ Verified</span>
+            <div class="email-bar-track"><div class="email-bar-fill verified" style="width: ${contactCount > 0 ? (verified / contactCount * 100) : 0}%"></div></div>
+            <span class="email-count">${verified}</span>
+          </div>
+          <div class="email-verify-row">
+            <span class="email-badge likely">~ Likely</span>
+            <div class="email-bar-track"><div class="email-bar-fill likely" style="width: ${contactCount > 0 ? (likely / contactCount * 100) : 0}%"></div></div>
+            <span class="email-count">${likely}</span>
+          </div>
+          <div class="email-verify-row">
+            <span class="email-badge unverified">? Unverified</span>
+            <div class="email-bar-track"><div class="email-bar-fill unverified" style="width: ${contactCount > 0 ? (unverified / contactCount * 100) : 0}%"></div></div>
+            <span class="email-count">${unverified}</span>
+          </div>
+          <div class="email-verify-row">
+            <span class="email-badge missing">✗ Missing</span>
+            <div class="email-bar-track"><div class="email-bar-fill missing" style="width: ${contactCount > 0 ? (missing / contactCount * 100) : 0}%"></div></div>
+            <span class="email-count">${missing}</span>
+          </div>
         </div>
       </div>
       <div class="summary-actions">
@@ -757,13 +855,18 @@ async function approveICP(icp) {
       body: icp,
     });
     
-    // Step 2: Scrape LinkedIn
+    // Step 2: Scrape — route to correct pipeline
     state.phase = 'scraping';
-    updateStatus('Scraping LinkedIn…', true);
-    const scrapeStatus = addStatusMessage('Searching LinkedIn for companies…');
+    const isApollo = state.pipeline === 'apollo';
+    const pipelineLabel = isApollo ? 'Apollo' : 'LinkedIn';
+    updateStatus(`Searching via ${pipelineLabel}…`, true);
+    const scrapeStatus = addStatusMessage(`Searching for companies via ${pipelineLabel}…`);
     
     const isTestMode = document.getElementById('test-mode-toggle').checked;
-    await fetchJSON(`/api/scrape/linkedin?test_mode=${isTestMode}`, { method: 'POST' });
+    const scrapeEndpoint = isApollo 
+      ? `/api/scrape/apollo?test_mode=${isTestMode}` 
+      : `/api/scrape/linkedin?test_mode=${isTestMode}`;
+    await fetchJSON(scrapeEndpoint, { method: 'POST' });
     // SSE will handle progress; __DONE__ triggers next step
     
   } catch (err) {
@@ -789,7 +892,73 @@ async function continueAfterContacts() {
   // Step 4: Enrich emails via website scraping (fallback)
   state.phase = 'enriching';
   updateStatus('Enriching emails…', true);
-  addStatusMessage('Scraping company websites for additional emails and phone numbers…');
+  
+  // Show a live email verification tracker card
+  const trackerId = 'enrichment-tracker-' + Date.now();
+  const trackerHtml = `
+    <div class="email-enrichment-tracker" id="${trackerId}">
+      <div class="enrichment-header">
+        <div class="enrichment-icon">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><polyline points="22,7 12,13 2,7"/></svg>
+        </div>
+        <div>
+          <div class="enrichment-title">Email Verification & Enrichment</div>
+          <div class="enrichment-subtitle">Scraping company websites for email addresses and phone numbers</div>
+        </div>
+      </div>
+      <div class="enrichment-progress">
+        <div class="enrichment-progress-bar">
+          <div class="enrichment-progress-fill" id="${trackerId}-fill" style="width: 0%"></div>
+        </div>
+        <span class="enrichment-progress-text" id="${trackerId}-text">Starting…</span>
+      </div>
+      <div class="enrichment-stats">
+        <div class="enrichment-stat">
+          <span class="enrichment-stat-icon verified">✓</span>
+          <span id="${trackerId}-found">0</span> emails found
+        </div>
+        <div class="enrichment-stat">
+          <span class="enrichment-stat-icon phone">📞</span>
+          <span id="${trackerId}-phones">0</span> phones found
+        </div>
+        <div class="enrichment-stat">
+          <span class="enrichment-stat-icon scanning">⟳</span>
+          <span id="${trackerId}-scanned">0</span> sites scanned
+        </div>
+      </div>
+    </div>
+  `;
+  addAIMessage(trackerHtml);
+
+  // Track enrichment progress from SSE messages
+  let emailsFound = 0, phonesFound = 0, sitesScanned = 0;
+  const totalSites = state.leads.length || 0;
+  
+  const enrichmentListener = (msg) => {
+    if (msg.includes('Scraping website')) {
+      sitesScanned++;
+      const fill = document.getElementById(`${trackerId}-fill`);
+      const text = document.getElementById(`${trackerId}-text`);
+      const scanned = document.getElementById(`${trackerId}-scanned`);
+      if (fill) fill.style.width = `${totalSites > 0 ? (sitesScanned / totalSites * 100) : 0}%`;
+      if (text) text.textContent = `${sitesScanned}/${totalSites} websites`;
+      if (scanned) scanned.textContent = sitesScanned;
+    }
+    if (msg.includes('email') || msg.includes('Email')) {
+      const match = msg.match(/(\d+)\s*email/i);
+      if (match) emailsFound = Math.max(emailsFound, parseInt(match[1]));
+      else if (msg.includes('@')) emailsFound++;
+      const el = document.getElementById(`${trackerId}-found`);
+      if (el) el.textContent = emailsFound;
+    }
+    if (msg.includes('phone') || msg.includes('Phone')) {
+      const match = msg.match(/(\d+)\s*phone/i);
+      if (match) phonesFound = Math.max(phonesFound, parseInt(match[1]));
+      const el = document.getElementById(`${trackerId}-phones`);
+      if (el) el.textContent = phonesFound;
+    }
+  };
+  window._enrichmentListener = enrichmentListener;
   
   try {
     const result = await fetchJSON('/api/enrich/email', { method: 'POST' });
@@ -807,6 +976,9 @@ async function continueAfterContacts() {
 async function finishPipeline() {
   state.phase = 'done';
   updateStatus('Ready', false);
+  
+  // Clean up enrichment tracker listener
+  window._enrichmentListener = null;
   
   // Load final leads — filtered to current session only
   try {
@@ -839,8 +1011,13 @@ async function exportXLSX() {
     const exportUrl = state.sessionId
       ? `${API_BASE_URL}/api/export?session_id=${encodeURIComponent(state.sessionId)}`
       : `${API_BASE_URL}/api/export`;
-    const res = await fetch(exportUrl);
-    if (!res.ok) throw new Error('No data to export');
+    const res = await fetch(exportUrl, {
+      headers: { 'Authorization': `Bearer ${state.token}` }
+    });
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.error || 'No data to export');
+    }
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -868,6 +1045,11 @@ function initSSE() {
       if (data.keepalive) return;
       
       const msg = data.message || '';
+      
+      // Forward to enrichment tracker if active
+      if (window._enrichmentListener && state.phase === 'enriching' && msg) {
+        window._enrichmentListener(msg);
+      }
       
       // Status transitions
       if (msg.startsWith('__STATUS__:')) {
@@ -951,6 +1133,7 @@ function initSSE() {
 }
 
 function handleStatusTransition(status) {
+  const isApollo = state.pipeline === 'apollo';
   if (status === 'idle') {
     // Pipeline step finished
   } else if (status === 'generating_icp') {
@@ -959,11 +1142,13 @@ function handleStatusTransition(status) {
     updateStatus('Awaiting approval', false);
     state.phase = 'awaiting_approval';
   } else if (status === 'scraping') {
-    updateStatus('Scraping LinkedIn…', true);
-    lastStatusEl = addStatusMessage('Scraping LinkedIn companies…');
+    const label = isApollo ? 'Searching Apollo…' : 'Scraping LinkedIn…';
+    updateStatus(label, true);
+    lastStatusEl = addStatusMessage(isApollo ? 'Searching Apollo.io for companies…' : 'Scraping LinkedIn companies…');
   } else if (status === 'finding_contacts') {
-    updateStatus('Finding contacts via Apify…', true);
-    lastStatusEl = addStatusMessage('Running Apify LinkedIn employee scraper…');
+    const label = isApollo ? 'Finding contacts via Apollo…' : 'Finding contacts via Apify…';
+    updateStatus(label, true);
+    lastStatusEl = addStatusMessage(isApollo ? 'Running Apollo people search…' : 'Running Apify LinkedIn employee scraper…');
   } else if (status === 'enriching') {
     updateStatus('Enriching emails…', true);
     lastStatusEl = addStatusMessage('Scraping company websites for emails…');

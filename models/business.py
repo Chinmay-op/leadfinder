@@ -15,7 +15,7 @@ class Business(BaseModel):
     phone: Optional[str] = None
     fit_score: Optional[int] = None
     fit_reason: Optional[str] = None
-    source: Optional[Literal["yahoo_linkedin", "google_maps", "linkedin"]] = "yahoo_linkedin"
+    source: Optional[Literal["yahoo_linkedin", "google_maps", "linkedin", "apollo"]] = "yahoo_linkedin"
     address: Optional[str] = None
     rating: Optional[float] = None
     total_reviews: Optional[int] = None

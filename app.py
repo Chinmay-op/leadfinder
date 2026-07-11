@@ -480,6 +480,91 @@ async def estimate_contacts_cost(req: ContactRequest = ContactRequest(), current
     return estimate
 
 
+# ── Apollo Pipeline Endpoint ──────────────────────────────────────────────────
+
+@app.post("/api/scrape/apollo")
+async def scrape_apollo_endpoint(test_mode: bool = False, current_user: User = Depends(get_current_user)):
+    """Start Apollo.io pipeline: org search → AI score → people search.
+    
+    This is the Apollo alternative to /api/scrape/linkedin.
+    Uses Apollo.io REST API instead of Yahoo scraping + Apify.
+    """
+    from icp import load_cached_icp
+    icp = load_cached_icp()
+    if not icp:
+        return JSONResponse({"error": "No ICP defined. Generate and approve ICP first."}, status_code=400)
+        
+    if state.status not in ("idle", "done", "failed"):
+        return JSONResponse({"error": "Pipeline busy"}, status_code=409)
+
+    async def _run():
+        # In test mode, wrap progress to suppress noisy per-item logs
+        progress_fn = TestModeProgress(state.progress) if test_mode else state.progress
+        
+        # Create a thin proxy so apollo pipeline sees .progress as a method
+        class _ProgressProxy:
+            def __init__(self, fn, parent_state):
+                self._fn = fn
+                self._parent_state = parent_state
+            def progress(self, msg):
+                self._fn(msg)
+            @property
+            def cancel_requested(self):
+                return self._parent_state.cancel_requested
+        
+        proxy = _ProgressProxy(progress_fn, state)
+        
+        try:
+            state.cancel_requested = False
+            # Clear stale enriched leads from previous sessions
+            if os.path.exists("enriched_leads.csv"):
+                try:
+                    os.remove("enriched_leads.csv")
+                except OSError:
+                    pass
+
+            await state.set_status("scraping")
+            loop = asyncio.get_running_loop()
+            from apollo_pipeline import run_apollo_full_pipeline
+            
+            # Reset in-memory businesses for this new session
+            state.businesses = []
+
+            # Run the full Apollo pipeline in a thread executor
+            businesses = await loop.run_in_executor(
+                None, run_apollo_full_pipeline, icp, proxy, test_mode
+            )
+            
+            state.businesses = businesses
+            
+            if state.cancel_requested:
+                progress_fn("Pipeline cancelled during Apollo search.")
+                return
+            
+            import uuid
+            session_id = str(uuid.uuid4())
+            state.current_session_id = session_id
+            
+            # Flush suppressed count before final messages
+            if isinstance(progress_fn, TestModeProgress):
+                progress_fn.flush_summary()
+            
+            # Set status to idle BEFORE sending __DONE__
+            state.status = "idle"
+            
+            await state.push(json.dumps({"type": "session_id", "session_id": session_id}))
+            await state.push("__DONE__")
+        except Exception as e:
+            state.progress(f"Error: {e}")
+        finally:
+            # Safety net — ensure status is always reset even on error
+            if state.status not in ("idle", "enriching"):
+                await state.set_status("idle")
+
+    asyncio.create_task(_run())
+    return {"status": "started"}
+
+
 # ── Email Enrichment Endpoint (Website Scraping Only) ─────────────────────────
 
 @app.post("/api/enrich/email")
@@ -498,7 +583,7 @@ async def enrich_email_endpoint(current_user: User = Depends(get_current_user)):
             await state.set_status("enriching")
             loop = asyncio.get_running_loop()
             
-            # Website Scraping for emails/phones (fallback for those missing after Apify)
+            # Website Scraping for emails/phones (fallback for those missing after Apify/Apollo)
             from playwright.async_api import async_playwright
             from enrich import scrape_company_website
             from models.contact import Contact
@@ -618,6 +703,18 @@ async def apify_status_endpoint(current_user: User = Depends(require_role("admin
     return {"status": "error", "configured": False, "message": "APIFY_API_KEY not set in .env"}
 
 
+@app.get("/api/apollo/status")
+async def apollo_status_endpoint(current_user: User = Depends(get_current_user)):
+    """Check if Apollo.io is correctly configured."""
+    from config import APOLLO_API_KEY
+    if APOLLO_API_KEY:
+        return {
+            "status": "ok",
+            "configured": True,
+        }
+    return {"status": "error", "configured": False, "message": "APOLLO_API_KEY not set in .env"}
+
+
 # ── Data Endpoints ────────────────────────────────────────────────────────────
 
 @app.get("/api/leads")
@@ -699,16 +796,20 @@ async def export_excel(session_id: str = None, current_user: User = Depends(get_
     if session_id and session_id == state.current_session_id:
         # Requesting active session
         businesses_to_export = state.businesses
-    else:
+    elif session_id:
         # Requesting older session
         from session_store import get_session
         from models.business import Business
         sess = get_session(session_id) if session_id else None
         if sess and "companies" in sess:
             businesses_to_export = [Business(**c) for c in sess["companies"]]
+    
+    # Fallback: use in-memory businesses if nothing found yet
+    if not businesses_to_export and state.businesses:
+        businesses_to_export = state.businesses
             
     if not businesses_to_export:
-        return JSONResponse(status_code=404, content={"error": "No data to export"})
+        return JSONResponse(status_code=404, content={"error": "No data to export. Run a search first."})
 
     from export import run_export
     output = run_export(businesses=businesses_to_export, progress=state.progress)

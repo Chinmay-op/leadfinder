@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/style.css?v=2">
+  <link rel="stylesheet" href="./style.css?v=2">
 </head>
 <body>
   <div class="app-layout">
@@ -53,6 +53,11 @@
         <span id="user-role-badge" style="background: var(--surface-hover); padding: 2px 6px; border-radius: 4px; margin-right: 6px; text-transform: capitalize;"></span>
         <span id="user-name"></span>
         <button id="btn-logout" style="margin-left: 8px; background: none; border: none; color: var(--accent); cursor: pointer; text-decoration: underline;">Logout</button>
+      </div>
+      <div class="pipeline-indicator" id="pipeline-indicator" style="display: none;" onclick="showPipelineSelector()" title="Click to change pipeline">
+        <span class="pipeline-indicator-dot" id="pipeline-dot"></span>
+        <span class="pipeline-indicator-text" id="pipeline-label">Apify</span>
+        <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
       </div>
       <div class="status-chip" id="status-chip">
         <span class="status-dot idle" id="status-dot"></span>
@@ -132,6 +137,65 @@
     </div>
   </div>
 
-  <script src="/static/app.js?v=2"></script>
+  <!-- ═══ PIPELINE SELECTOR MODAL ═══ -->
+  <div id="pipeline-overlay" class="pipeline-overlay" style="display: none;">
+    <div class="pipeline-modal">
+      <div class="pipeline-modal-header">
+        <h2>Choose Your Pipeline</h2>
+        <p>Select how you want to discover leads</p>
+      </div>
+      <div class="pipeline-cards">
+        <!-- Apify Card -->
+        <div class="pipeline-card active" data-pipeline="apify" onclick="selectPipeline('apify')">
+          <div class="pipeline-card-badge">Default</div>
+          <div class="pipeline-card-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="32" height="32">
+              <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+              <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
+              <line x1="12" y1="22.08" x2="12" y2="12"/>
+            </svg>
+          </div>
+          <h3>Apify Pipeline</h3>
+          <p class="pipeline-card-desc">Yahoo Search → LinkedIn Scrape → AI Scoring → Apify Contact Discovery → Website Enrichment</p>
+          <ul class="pipeline-card-features">
+            <li>✓ Scrapes LinkedIn company profiles</li>
+            <li>✓ AI-powered ICP scoring</li>
+            <li>✓ Deep contact discovery via Apify</li>
+            <li>✓ Email & phone enrichment</li>
+          </ul>
+          <div class="pipeline-card-footer">
+            <span class="pipeline-card-key">Requires: APIFY_API_KEY</span>
+          </div>
+        </div>
+        <!-- Apollo Card -->
+        <div class="pipeline-card" data-pipeline="apollo" onclick="selectPipeline('apollo')">
+          <div class="pipeline-card-badge apollo-badge">API-First</div>
+          <div class="pipeline-card-icon apollo-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="32" height="32">
+              <circle cx="12" cy="12" r="10"/>
+              <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+              <line x1="2" y1="12" x2="22" y2="12"/>
+            </svg>
+          </div>
+          <h3>Apollo Pipeline</h3>
+          <p class="pipeline-card-desc">Apollo.io API → Organization Search → AI Scoring → People Search → Contact Discovery</p>
+          <ul class="pipeline-card-features">
+            <li>✓ Direct API — no browser scraping</li>
+            <li>✓ Rich company database</li>
+            <li>✓ Built-in email discovery</li>
+            <li>✓ Free tier supported</li>
+          </ul>
+          <div class="pipeline-card-footer">
+            <span class="pipeline-card-key">Requires: APOLLO_API_KEY</span>
+          </div>
+        </div>
+      </div>
+      <button class="pipeline-confirm-btn" id="btn-confirm-pipeline" onclick="confirmPipeline()">
+        Continue with <span id="pipeline-confirm-name">Apify Pipeline</span> →
+      </button>
+    </div>
+  </div>
+
+  <script src="./app.js?v=2"></script>
 </body>
 </html>

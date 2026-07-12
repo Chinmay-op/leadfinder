@@ -24,7 +24,8 @@ def _default_progress(msg: str):
 
 azure_client = OpenAI(
     base_url=AZURE_OPENAI_ENDPOINT,
-    api_key=AZURE_OPENAI_KEY
+    api_key=AZURE_OPENAI_KEY,
+    timeout=30.0
 )
 AZURE_MODEL = "gpt-5-chat"
 

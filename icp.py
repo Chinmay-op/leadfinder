@@ -66,4 +66,5 @@ def run_icp_generation(user_input: str, state) -> None:
         state.progress("ICP generated. Waiting for approval.")
     except Exception as e:
         state.progress(f"Error in ICP generation: {e}")
+        state.progress("__STATUS__:failed")
         state.status = "failed"
